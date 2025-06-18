@@ -1,11 +1,39 @@
-import { useState } from "react";
-import PurchaseModal from "./PurchaseModal";
+import { useContext, useState } from "react";
+import { CartContext } from "../context/CartContext";
 
-function ProductItem({ producto, refetchProductos }) {
-    const [mostrarModal, setMostrarModal] = useState(false);
+function ProductItem({ producto }) {
+    const { cartItems, addToCart, removeFromCart } = useContext(CartContext);
+
+    const [mensajeStock, setMensajeStock] = useState("");
+
+    const reservados = producto.reservados ?? 0;
+    const stockReal = producto.cantidad - reservados;
+
+    const carritoItem = cartItems.find(item => item.id === producto.id);
+    const cantidadEnCarrito = carritoItem ? carritoItem.cantidad : 0;
+
+    const handleAdd = () => {
+        if (cantidadEnCarrito >= stockReal) {
+            setMensajeStock("Límite stock disponible");
+            setTimeout(() => setMensajeStock(""), 3000);
+            return;
+        }
+        addToCart(producto);
+    };
+
+    const handleRemove = () => {
+        removeFromCart(producto.id);
+    };
 
     return (
         <div className="product-item">
+            {/* Mensaje de stock agotado */}
+            {mensajeStock && (
+                <div className="stock-aviso">
+                    {mensajeStock}
+                </div>
+            )}
+
             <div className="image">
                 <img src={producto.imagen} alt={producto.titulo} />
             </div>
@@ -19,18 +47,36 @@ function ProductItem({ producto, refetchProductos }) {
             <div className="cta">
                 <div className="cta-content">
                     <div className="categoria">{producto.categoria}</div>
-                    <button className="reservarBtn" onClick={() => setMostrarModal(true)}>Reservar</button>
-                    <div className="stock">Stock: {producto.cantidad} - Reservados: {producto.reservados ?? 0}</div>
+
+                    <div className="button-row">
+                        <button
+                            className="reservarBtn"
+                            onClick={handleAdd}
+                            disabled={stockReal <= 0}
+                            title={stockReal <= 0 ? "Sin stock disponible" : ""}
+                        >
+                            Comprar
+                        </button>
+
+                        <button
+                            className="removeBtn"
+                            onClick={handleRemove}
+                            title="Quitar del carrito"
+                        >
+                            ×
+                        </button>
+                    </div>
+
+                    <div className="stock">
+                        Stock: {stockReal > 0 ? stockReal : 0}
+                        {cantidadEnCarrito > 0 && (
+                            <span style={{ marginLeft: "10px", fontWeight: "bold" }}>
+                                (En carrito: {cantidadEnCarrito})
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
-
-            {mostrarModal && (
-                <PurchaseModal
-                    producto={producto}
-                    onClose={() => setMostrarModal(false)}
-                    refetchProductos={refetchProductos} // ✅ lo pasamos acá
-                />
-            )}
         </div>
     );
 }

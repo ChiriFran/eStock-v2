@@ -1,15 +1,27 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useContext } from "react";
 import { collection, getDocs } from "firebase/firestore";
 import { db } from "./firebase/config";
 import ProductList from "./components/ProductList";
-import "./styles/styles.css";
+import PurchaseModal from "./components/PurchaseModal";
+import { CartContext } from "./context/CartContext";
 
+import "./styles/styles.css";
 import logo from '../assets/img/logoConNombre.png';
 import logoFooter from '../assets/img/eStockFavicon.png';
+
+// Importar íconos locales
+import carritoVacio from '../assets/icons/carrito-vacio.svg';
+import carritoLleno from '../assets/icons/carrito-lleno.svg';
+
+import CartPopupButton from "./components/CartPopupButton";  // Importar nuevo botón
+
 
 function App() {
   const [productos, setProductos] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [mostrarModal, setMostrarModal] = useState(false);
+
+  const { getTotalQuantity } = useContext(CartContext);
 
   const fetchProductos = async () => {
     try {
@@ -34,20 +46,53 @@ function App() {
     fetchProductos();
   }, []);
 
+  const totalCantidad = getTotalQuantity();
+
   return (
     <div className="app-container">
+      {/* Header */}
       <div className="headerContainer">
-        <img src={logo} alt="eStock" />
+        <img src={logo} alt="eStock" className="logo" />
+
+        <div
+          className="cartIcon"
+          onClick={() => {
+            if (totalCantidad > 0) {
+              setMostrarModal(true);
+            }
+          }}
+          style={{ cursor: totalCantidad > 0 ? 'pointer' : 'default' }}
+          title={totalCantidad > 0 ? 'Ver carrito' : 'Carrito vacío'}
+        >
+          <img
+            src={totalCantidad > 0 ? carritoLleno : carritoVacio}
+            alt="Carrito"
+            className="cartSVG"
+          />
+          <span className="cartCount">{totalCantidad}</span>
+        </div>
       </div>
+
       <h1>Lista de Productos</h1>
       <ProductList
         productos={productos}
         loading={loading}
         refetchProductos={fetchProductos}
       />
+
       <div className="footerContainer">
         <img src={logoFooter} alt="" />
       </div>
+
+      {/* Botón flotante para abrir carrito */}
+      <CartPopupButton onOpen={() => setMostrarModal(true)} />
+        
+      {mostrarModal && (
+        <PurchaseModal
+          onClose={() => setMostrarModal(false)}
+          refetchProductos={fetchProductos}
+        />
+      )}
     </div>
   );
 }

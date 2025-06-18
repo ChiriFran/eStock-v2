@@ -1,15 +1,22 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useContext } from "react";
 import { doc, setDoc, updateDoc, increment, getDoc } from "firebase/firestore";
 import { db } from "../firebase/config";
+import { CartContext } from "../context/CartContext";
 
-function PurchaseModal({ producto, onClose, refetchProductos }) {
+function PurchaseModal({ onClose, refetchProductos }) {
     const backdropRef = useRef(null);
     const [visible, setVisible] = useState(false);
-
     const [nombre, setNombre] = useState("");
     const [telefono, setTelefono] = useState("");
     const [correo, setCorreo] = useState("");
     const [loading, setLoading] = useState(false);
+
+    const { cartItems, clearCart, removeFromCart } = useContext(CartContext);
+
+    const total = cartItems.reduce(
+        (acc, item) => acc + item.precio * item.cantidad,
+        0
+    );
 
     useEffect(() => {
         setTimeout(() => setVisible(true), 10);
@@ -23,7 +30,12 @@ function PurchaseModal({ producto, onClose, refetchProductos }) {
 
     const handleClose = () => {
         setVisible(false);
-        setTimeout(() => onClose(), 200);
+        setTimeout(() => {
+            if (typeof refetchProductos === "function") {
+                refetchProductos();
+            }
+            onClose();
+        }, 200);
     };
 
     const handleSubmit = async (e) => {
@@ -31,13 +43,7 @@ function PurchaseModal({ producto, onClose, refetchProductos }) {
         setLoading(true);
 
         const now = new Date();
-        const day = String(now.getDate()).padStart(2, '0');
-        const month = String(now.getMonth() + 1).padStart(2, '0');
-        const year = now.getFullYear();
-        const hours = String(now.getHours()).padStart(2, '0');
-        const minutes = String(now.getMinutes()).padStart(2, '0');
-        const fechaId = `${day}-${month}-${year}-${hours}${minutes}`;
-
+        const fechaId = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}-${now.getHours()}${now.getMinutes()}`;
         const fecha = new Intl.DateTimeFormat('es-AR', {
             day: 'numeric',
             month: 'long',
@@ -47,49 +53,59 @@ function PurchaseModal({ producto, onClose, refetchProductos }) {
         }).format(now);
 
         const nombreNormalizado = nombre.trim().toLowerCase().replace(/\s+/g, "-");
-        const tituloNormalizado = producto.titulo.trim().toLowerCase().replace(/\s+/g, "-");
-        const docId = `${tituloNormalizado}-${nombreNormalizado}-${fechaId}`;
-        const productoRef = doc(db, "productos", tituloNormalizado);
+        const docId = `pedido-${nombreNormalizado}-${fechaId}`;
 
         try {
-            const productoSnap = await getDoc(productoRef);
-
-            if (productoSnap.exists()) {
-                const data = productoSnap.data();
-                const cantidad = data.cantidad ?? 0;
-                const reservados = data.reservados ?? 0;
-
-                if (cantidad !== 0 && reservados >= cantidad) {
-                    alert("Este producto ya no está disponible.");
-                    refetchProductos(); // 🔁 actualiza la lista global
+            for (const item of cartItems) {
+                const ref = doc(db, "productos", item.titulo.trim().toLowerCase().replace(/\s+/g, "-"));
+                const snap = await getDoc(ref);
+                if (!snap.exists()) {
+                    alert(`El producto ${item.titulo} ya no existe.`);
                     handleClose();
                     return;
                 }
-
-                await setDoc(doc(db, "pedidos", docId), {
-                    producto: producto.titulo,
-                    cliente: nombre,
-                    telefono,
-                    correo,
-                    fecha,
-                });
-
-                await updateDoc(productoRef, {
-                    reservados: increment(1),
-                });
-
-                alert("Nos comunicaremos a la brevedad. ¡Gracias por elegirnos!");
-                refetchProductos(); // 🔁 vuelve a consultar productos
-                handleClose();
-            } else {
-                alert("El producto ya no existe.");
-                refetchProductos();
-                handleClose();
+                const data = snap.data();
+                const cantidad = data.cantidad ?? 0;
+                const reservados = data.reservados ?? 0;
+                if (cantidad !== 0 && reservados >= cantidad) {
+                    alert(`El producto ${item.titulo} ya no está disponible.`);
+                    handleClose();
+                    return;
+                }
             }
+
+            await setDoc(doc(db, "pedidos", docId), {
+                cliente: nombre,
+                telefono,
+                correo,
+                productos: cartItems.map(p => ({
+                    titulo: p.titulo,
+                    categoria: p.categoria,
+                    cantidad: p.cantidad,
+                    precioUnitario: p.precio,
+                    subtotal: p.precio * p.cantidad
+                })),
+                total,
+                fecha
+            });
+
+            for (const item of cartItems) {
+                const ref = doc(db, "productos", item.titulo.trim().toLowerCase().replace(/\s+/g, "-"));
+                await updateDoc(ref, {
+                    reservados: increment(item.cantidad)
+                });
+            }
+
+            alert("Nos comunicaremos a la brevedad. ¡Gracias por tu compra!");
+            clearCart();
+            // Actualizo productos aquí justo después de limpiar carrito
+            if (typeof refetchProductos === "function") {
+                await refetchProductos();
+            }
+            handleClose();
         } catch (error) {
-            console.error("Error al enviar consulta:", error);
-            alert("Hubo un error al enviar la consulta.");
-        } finally {
+            console.error("Error al enviar pedido:", error);
+            alert("Hubo un error al enviar el pedido.");
             setLoading(false);
         }
     };
@@ -101,13 +117,35 @@ function PurchaseModal({ producto, onClose, refetchProductos }) {
             onClick={handleClickOutside}
         >
             <div className={`modal ${visible ? "fade-in" : "fade-out"}`}>
-                <button className="close" onClick={handleClose}>X</button>
+                <button className="close" onClick={handleClose}>×</button>
                 <div className="modal-content">
-                    <h2 className="modalTitle">{producto.titulo} ({producto.categoria})</h2>
-                    <span className="modalPrice">${producto.precio}</span>
-                    <img className="modalImg" src={producto.imagen} alt={producto.titulo} />
-                    <p className="modalText">Una vez enviado el formulario nos comunicaremos a la brevedad.</p>
-                    <form onSubmit={handleSubmit}>
+                    <h2 className="modalTitle">Resumen del pedido</h2>
+                    <p className="modalText">Verificá los productos antes de confirmar:</p>
+
+                    <ul className="modal-product-list">
+                        {cartItems.map((item) => (
+                            <li key={item.id} className="modal-product-item">
+                                <div>
+                                    <strong>{item.titulo}</strong> ({item.categoria})<br />
+                                    {item.cantidad} x ${item.precio} = <strong>${item.precio * item.cantidad}</strong>
+                                </div>
+
+                                <button
+                                    onClick={() => removeFromCart(item.id)}
+                                    className="delete-btn"
+                                    title="Quitar del carrito"
+                                >
+                                    ×
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+
+                    <div className="totalContainer">
+                        <strong>Total:</strong> ${total}
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="form">
                         <input
                             type="text"
                             placeholder="Nombre"
@@ -120,10 +158,7 @@ function PurchaseModal({ producto, onClose, refetchProductos }) {
                             type="tel"
                             placeholder="Teléfono"
                             value={telefono}
-                            onChange={(e) => {
-                                const onlyNums = e.target.value.replace(/\D/g, '');
-                                setTelefono(onlyNums);
-                            }}
+                            onChange={(e) => setTelefono(e.target.value.replace(/\D/g, ''))}
                             required
                             disabled={loading}
                         />
@@ -136,7 +171,7 @@ function PurchaseModal({ producto, onClose, refetchProductos }) {
                             disabled={loading}
                         />
                         <button type="submit" disabled={loading}>
-                            {loading ? "Enviando..." : "Enviar consulta"}
+                            {loading ? "Enviando..." : "Confirmar pedido"}
                         </button>
                     </form>
                 </div>
